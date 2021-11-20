@@ -1,0 +1,28 @@
+.login_container,
+.create_public_room_container,
+.get_all_room_container,
+.start_chat_container,
+.select_server_container,
+.show_public_room_container,
+.create_room_container,
+.delete_room_container,
+.invite_join_room_container,
+.join_room_container,
+.register_container,
+.set_room_encrytion_container,
+.verified_device_container,
+.verified_login,
+.create_ssss_container{
+    border: 1px solid;
+    padding-top: 20px;
+    padding-bottom: 20px;
+    padding-left: 20px;
+}
+#messageToSent,
+#sentMessage{
+    display: none;
+}
+.green-text{
+    color: #3EA055;
+    cursor: pointer;
+}
