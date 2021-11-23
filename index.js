@@ -1,5 +1,5 @@
 const BASE_URL = 'https://matrix.org';
-
+// const BASE_URL = 'https://matrix.loolootest.com';
 const ROOM_CRYPTO_CONFIG = { algorithm: 'm.megolm.v1.aes-sha2' };
 // Database
 let opts = { indexedDB: window.indexedDB, localStorage: window.localStorage };
@@ -75,6 +75,22 @@ let secure_key = "";
 
 let passphrase_legth = 45; // at least 256 bits
 
+// SAS
+let requestPromise = null;
+let verificationRequest = null;
+let sasEvent = null;
+let isShowEmoji = false;
+let startVerifyEmoji = document.getElementById('startVerifyEmoji');
+let emojiFbtnb = document.getElementById('emojiFbtnb');
+let emojiTbtnb = document.getElementById('emojiTbtnb');
+let cancelEmojiVerify = document.getElementById('cancelEmojiVerify');
+let acceptREQ = document.getElementById('acceptREQ');
+let deniedREQ = document.getElementById('deniedREQ');
+
+// Verify DM
+let roomIDToVerifyDM = document.getElementById('roomIDToVerifyDM');
+let verifiedDMbtn = document.getElementById('verifiedDMbtn');
+
 function makeRandomKey() {
     var result = '';
     var characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
@@ -109,6 +125,8 @@ function encodeBase64(uint8Array) {
 function decodeBase64(base64) {
     return buffer.Buffer.from(base64, "base64");
 }
+
+// == implement SSSS ==
 
 async function getSecretStorageKey({ keys }, name) {
     console.log(keys)
@@ -207,7 +225,76 @@ const cryptoCallbacks = {
 
 // ==End implement SSSS==
 
+// == Implement emoji verification (SAS) ==
+const MKeyVerificationRequest = async () => {
+
+    //m.key.verification.request
+    requestPromise = await client.requestVerification(user_id);
+    $('#waitAcceptVerified').modal('show');
+}
+
+const MKeyVerificationStartEmoji = async () => {
+    $('#VerifiedOtherLogin1').modal('hide');
+    const verifier = requestPromise.beginKeyVerification("m.sas.v1")
+    try {
+        await verifier.verify();
+    } catch (err) {
+        console.log(err)
+    }
+}
+
+const CountdownToDeniedVerifyRequest = () => {
+    var timeleft = 120;
+    var downloadTimer = setInterval(function () {
+        if (timeleft <= 0) {
+            clearInterval(downloadTimer);
+        }
+        timeleft -= 1;
+        $("#reqTimeout").text(timeleft);
+    }, 1200);
+}
+
+const MKeyReceiptVerificationRequest = async (transaction_id, from_device, sender, MatrixEvent) => {
+
+    verificationRequest = MatrixEvent;
+    $("#req_transaction_id").text(transaction_id);
+    $("#req_device_id").text(from_device);
+    $("#req_sender").text(sender);
+    CountdownToDeniedVerifyRequest();
+    $("#receiptVerifiedRequest").modal('show');
+}
+
+const onAcceptVerifiedClicked = async () => {
+    try {
+        requestPromise = verificationRequest.verificationRequest;
+        await verificationRequest.verificationRequest.accept();
+        $('#receiptVerifiedRequest').modal('hide');
+        $('#VerifiedOtherLogin1').modal('show');
+    } catch (err) {
+        console.log(err)
+    }
+}
+
+const onRejectVerifiedClicked = async () => {
+    try {
+        await verificationRequest.verificationRequest.cancel();
+    } catch (err) {
+        console.log(err)
+    }
+}
+
+// == End SAS
+
+const requestVerificationDM = async () => {
+    const room_id = roomIDToVerifyDM.value;
+    const room = client.getRoom(room_id);
+    const members = room.getJoinedMembers();
+    const user_id_req = members[0].userId;
+    requestPromise = await client.requestVerificationDM(user_id_req, room_id);
+}
+
 const LoginUser = async () => {
+
     var usernameText = username.value;
     var passwordText = password.value;
 
@@ -361,7 +448,15 @@ const initBootstrapCrossSigning = async () => {
     client.uploadKeySignatures();
 }
 
-const GeneratePassPhrase = async () => {
+const createKeyBackup = async (passphrase) => {
+    const prepare_key_data = await client.prepareKeyBackupVersion(passphrase, {
+        secureSecretStorage: true
+    });
+
+    await client.createKeyBackupVersion(prepare_key_data);
+}
+
+const CreateSecretStorage = async () => {
     if (ssss_key.value == '') {
         alert("Please input key");
         return
@@ -380,11 +475,8 @@ const GeneratePassPhrase = async () => {
         setupNewCrossSigning: true
     });
 
-    const prepare_key_data = await client.prepareKeyBackupVersion(passphrase, {
-        secureSecretStorage: true
-    });
+    createKeyBackup(passphrase);
 
-    await client.createKeyBackupVersion(prepare_key_data);
 }
 
 const VerifiedLogin_SecureKey = async () => {
@@ -581,27 +673,6 @@ const sendMessageToRooms = async () => {
     });
 }
 
-
-const verifiedCrossSigning = async () => {
-
-    // m.key.verification.request
-    var TxnId = client.makeTxnId();
-    transaction_request = TxnId;
-
-    var content = {};
-    content[user_id] = {
-        "*": {
-            "from_device": device_id,
-            "methods": [
-                "m.sas.v1"
-            ],
-            "timestamp": Date.now(),
-            "transaction_id": TxnId
-        }
-    }
-    client.sendToDevice("m.key.verification.request", content, TxnId);
-}
-
 const requestVerifiedReady = async () => {
 
     // m.key.verification.ready
@@ -675,7 +746,39 @@ const requestCancel = async () => {
     client.sendToDevice("m.key.verification.cancel", content, TxnId);
 }
 
+const ShowSASVerification = async (request) => {
+    const sasEventPromise = new Promise(resolve =>
+        request.verifier.once("show_sas", resolve)
+    );
+    request.verifier.verify();
+    sasEvent = await sasEventPromise;
+    if (request.cancelled) {
+        throw new Error("verification aborted");
+    }
+
+    const decimal = sasEvent.sas.decimal;
+    const emoji = sasEvent.sas.emoji;
+    for (var i = 0; i < emoji.length; i++) {
+        $('#show-emoji-box').append("<span>" + emoji[i][0] + "</span>");
+    }
+
+    $('#ShowVerifiedEmoji').modal("show");
+}
+
+const onSasMatchesClick = async () => {
+    sasEvent.confirm();
+}
+
+const onSasMismatchesClick = async () => {
+    sasEvent.mismatch();
+}
+
+const onSasCancelClick = async () => {
+    sasEvent.cancel();
+}
+
 function extendMatrixClient(client) {
+
     // automatic join
     client.on('RoomMember.membership', async (event, member) => {
         if (member.membership === 'invite' && member.userId === client.getUserId()) {
@@ -717,10 +820,6 @@ function extendMatrixClient(client) {
         }
     });
 
-    client.on("crypto.verification.request", function (event) {
-        const eventsByThemKeys = event.eventsByThem.keys();
-        const eventsByThem = eventsByThemKeys.next().value;
-    });
     client.on("Room.timeline", function (event, room, toStartOfTimeline) {
         // we know we only want to respond to messages
         if (event.getType() !== "m.room.message") {
@@ -732,6 +831,31 @@ function extendMatrixClient(client) {
             console.log(event.getContent().body, "!!!")
         }
     });
+
+    client.on("toDeviceEvent", function (event) {
+
+        const event_type = event.event.type;
+
+        if (requestPromise !== null) {
+            if (requestPromise.verifier && isShowEmoji == false) {
+                ShowSASVerification(requestPromise);
+                isShowEmoji = true;
+            }
+        }
+        if (event_type == 'm.key.verification.ready') {
+            $('#waitAcceptVerified').modal('hide');
+            $('#VerifiedOtherLogin1').modal('show');
+        } else if (event_type == 'm.key.verification.done') {
+            $('#ShowVerifiedEmoji').modal("hide");
+            $('#VerifiedSessionSuccess').modal("show");
+        } else if (event_type == 'm.key.verification.request') {
+
+            const transaction_id = event.event.content.transaction_id;
+            const from_device = event.event.content.from_device;
+            const sender = event.event.sender;
+            MKeyReceiptVerificationRequest(transaction_id, from_device, sender, event);
+        }
+    });
 }
 
 
@@ -740,14 +864,21 @@ Loginbtn.addEventListener('click', LoginUser);
 Registerbtn.addEventListener('click', Register);
 register_guestbtn.addEventListener('click', registerGuest);
 logoutBTN.addEventListener('click', Logout);
-create_ssss_key_btn.addEventListener('click', GeneratePassPhrase);
+create_ssss_key_btn.addEventListener('click', CreateSecretStorage);
 verifiyKeybtn.addEventListener('click', VerifiedLogin_SecureKey);
 GetAllRoombtn.addEventListener('click', getAllRoom);
 StartChatbtn.addEventListener('click', startChat);
-VerifiedBtn.addEventListener('click', verifiedCrossSigning);
+VerifiedBtn.addEventListener('click', MKeyVerificationRequest);
 createRoombtn.addEventListener('click', createRoom);
 delRoombtn.addEventListener('click', deleteRoom);
 Leavebtn.addEventListener('click', leaveRoom);
 sentMessagebtn.addEventListener('click', sendMessageToRooms);
 randomKeybtn.addEventListener('click', generateRandomKeyUser);
 copyGenKeybtn.addEventListener('click', copyKeyUser);
+startVerifyEmoji.addEventListener('click', MKeyVerificationStartEmoji);
+emojiTbtnb.addEventListener('click', onSasMatchesClick);
+emojiFbtnb.addEventListener('click', onSasMismatchesClick);
+cancelEmojiVerify.addEventListener('click', onSasCancelClick);
+acceptREQ.addEventListener('click', onAcceptVerifiedClicked);
+deniedREQ.addEventListener('click', onRejectVerifiedClicked);
+verifiedDMbtn.addEventListener('click', requestVerificationDM);

@@ -12,7 +12,8 @@
 .set_room_encrytion_container,
 .verified_device_container,
 .verified_login,
-.create_ssss_container{
+.create_ssss_container,
+.verified_dm_container{
     border: 1px solid;
     padding-top: 20px;
     padding-bottom: 20px;
